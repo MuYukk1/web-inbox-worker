@@ -2,7 +2,16 @@
 
 [Web Inbox](../bili-inbox) 收集箱的 Cloudflare Worker 后端:存储网页/B站链接、管理 LLM 配置(存 KV,key 前端只回显掩码)、转发 AI 总结请求、接收 PC 归档脚本的状态回写。
 
-客户端:双端 Edge 的 Tampermonkey 油猴脚本 + PC 归档脚本(均在本地项目 `bili-inbox/` 中)。
+客户端:双端 Edge 的 Tampermonkey 油猴脚本(`userscript/web-inbox.user.js`,本仓库也提供自动更新源)+ PC 归档脚本(本地项目 `bili-inbox/`)。
+
+## 安装油猴脚本
+
+Tampermonkey(篡改猴)中新建脚本,或直接在**装有 Tampermonkey 的浏览器**打开下面的安装地址:
+
+- 安装/更新地址(CDN 加速):`https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js`
+- 源文件:`userscript/web-inbox.user.js`
+
+脚本头部已配置 `@updateURL` / `@downloadURL`,Tampermonkey 会定期自动检查更新(也可以在 TM 管理面板手动点"检查更新")。注意 jsDelivr CDN 有数小时缓存,刚 push 的新版本可能要等缓存刷新;急着用时从仓库 raw 地址手动安装。
 
 ## 通过 GitHub Action 自动部署
 
