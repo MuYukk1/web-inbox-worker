@@ -1,0 +1,36 @@
+name: Test & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node test/routes.test.mjs
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 从 Secrets 注入配置生成 wrangler.toml
+        run: |
+          test -n "${{ secrets.KV_NAMESPACE_ID }}" || { echo "缺少 secret: KV_NAMESPACE_ID"; exit 1; }
+          test -n "${{ secrets.WORKER_TOKEN }}" || { echo "缺少 secret: WORKER_TOKEN"; exit 1; }
+          sed -i "s/__KV_ID__/${{ secrets.KV_NAMESPACE_ID }}/" wrangler.toml
+          sed -i "s/__WORKER_TOKEN__/${{ secrets.WORKER_TOKEN }}/" wrangler.toml
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

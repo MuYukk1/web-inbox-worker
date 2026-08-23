@@ -1,0 +1,13 @@
+name = "web-inbox"
+main = "index.js"
+compatibility_date = "2025-01-01"
+
+# 真实值不在仓库中保存,部署时由 GitHub Action 从 Secrets 注入:
+#   __KV_ID__       → secrets.KV_NAMESPACE_ID
+#   __WORKER_TOKEN__→ secrets.WORKER_TOKEN(客户端访问用的鉴权 Token)
+[[kv_namespaces]]
+binding = "KV"
+id = "__KV_ID__"
+
+[vars]
+TOKEN = "__WORKER_TOKEN__"

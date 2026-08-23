@@ -1,0 +1,9 @@
+{
+  "name": "web-inbox-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/routes.test.mjs",
+    "deploy": "wrangler deploy"
+  }
+}
