@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Web Inbox 收集箱
 // @name:en      Web Inbox Saver
-// @description  保存网页正文/B站视频到自己的 Cloudflare Worker,双端 Edge 可用;AI 总结、历史查看、下载归档
+// @description  保存网页正文/B站视频到自己的 Cloudflare Worker,双端 Edge 可用;B站视频可抓取字幕/评论,AI 总结、历史查看、下载归档
 // @namespace    https://github.com/local/web-inbox
-// @version      0.2.2
+// @version      0.3.0
 // @updateURL    https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js
 // @author       you
@@ -207,6 +207,309 @@
     return out;
   }
 
+  // ---------- B站视频:字幕 / 评论提取 ----------
+
+  // GM_xmlhttpRequest 封装:绕过页面 CORS/ referer 限制,浏览器 cookie 照常携带
+  function gmRequest(url) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: "GET", url, timeout: 30000,
+        onload: resolve,
+        onerror: () => reject(new Error("网络请求失败")),
+        ontimeout: () => reject(new Error("请求超时")),
+      });
+    });
+  }
+
+  /* WI-PURE-BEGIN —— 纯函数区:无 DOM/网络依赖,test-bili.mjs 会抽取这段做单测 */
+
+  // wbi 混淆表(公开算法,来自 bilibili-API-collect)
+  const MIXIN_TAB = [
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5,
+    49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55,
+    40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57,
+    62, 11, 36, 20, 34, 44, 52,
+  ];
+  const MD5_S = [
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+  ];
+  const MD5_K = [
+    3614090360, 3905402710, 606105819, 3250441966, 4118548399, 1200080426, 2821735955, 4249261313,
+    1770035416, 2336552879, 4294925233, 2304563134, 1804603682, 4254626195, 2792965006, 1236535329,
+    4129170786, 3225465664, 643717713, 3921069994, 3593408605, 38016083, 3634488961, 3889429448,
+    568446438, 3275163606, 4107603335, 1163531501, 2850285829, 4243563512, 1735328473, 2368359562,
+    4294588738, 2272392833, 1839030562, 4259657740, 2763975236, 1272893353, 4139469664, 3200236656,
+    681279174, 3936430074, 3572445317, 76029189, 3654602809, 3873151461, 530742520, 3299628645,
+    4096336452, 1126891415, 2878612391, 4237533241, 1700485571, 2399980690, 4293915773, 2240044497,
+    1873313359, 4264355552, 2734768916, 1309151649, 4149444226, 3174756917, 718787259, 3951481745,
+  ];
+
+  // 标准 MD5(RFC 1321),hex 输出;crypto.subtle 不支持 MD5,只能手写
+  function md5(input) {
+    const bytes = new TextEncoder().encode(input);
+    const n = bytes.length;
+    const padded = new Uint8Array((((n + 8) >> 6) + 1) << 6);
+    padded.set(bytes);
+    padded[n] = 0x80;
+    const dv = new DataView(padded.buffer);
+    dv.setUint32(padded.length - 8, (n * 8) >>> 0, true);
+    dv.setUint32(padded.length - 4, Math.floor(n / 536870912), true);
+    let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+    const M = new Int32Array(16);
+    for (let off = 0; off < padded.length; off += 64) {
+      for (let i = 0; i < 16; i++) M[i] = dv.getInt32(off + i * 4, true);
+      let A = a0, B = b0, Cc = c0, D = d0;
+      for (let i = 0; i < 64; i++) {
+        let F, g;
+        if (i < 16)      { F = (B & Cc) | (~B & D); g = i; }
+        else if (i < 32) { F = (D & B) | (~D & Cc); g = (5 * i + 1) % 16; }
+        else if (i < 48) { F = B ^ Cc ^ D;          g = (3 * i + 5) % 16; }
+        else             { F = Cc ^ (B | ~D);       g = (7 * i) % 16; }
+        F = (F + A + MD5_K[i] + M[g]) | 0;
+        const rot = (F << MD5_S[i]) | (F >>> (32 - MD5_S[i]));
+        A = D; D = Cc; Cc = B;
+        B = (B + rot) | 0;
+      }
+      a0 = (a0 + A) | 0; b0 = (b0 + B) | 0; c0 = (c0 + Cc) | 0; d0 = (d0 + D) | 0;
+    }
+    let out = "";
+    for (const x of [a0, b0, c0, d0]) {
+      for (let i = 0; i < 4; i++) out += ((x >>> (i * 8)) & 0xff).toString(16).padStart(2, "0");
+    }
+    return out;
+  }
+
+  // wbi 签名:与 bilibili-API-collect / PC 端 bilibili_api.py 算法一致
+  function buildWbiQuery(mixinKey, params, wts) {
+    const p = { wts: wts, ...params };
+    const query = Object.keys(p).sort()
+      .map((k) => encodeURIComponent(k) + "=" + encodeURIComponent(String(p[k]).replace(/[!'()*]/g, "")))
+      .join("&");
+    return query + "&w_rid=" + md5(mixinKey + query);
+  }
+
+  // 字幕优先级:人工中文(zh-CN) > AI 中文(ai-zh) > 其他中文 > 任意
+  function pickSubtitle(subs) {
+    const rank = (s) => {
+      const lan = s.lan || "";
+      if (lan === "zh-CN") return 0;
+      if (lan === "ai-zh") return 1;
+      if (lan.startsWith("zh")) return 2;
+      return 3;
+    };
+    return subs.length ? subs.reduce((a, b) => (rank(b) < rank(a) ? b : a)) : null;
+  }
+
+  function lanLabel(lan) {
+    return { "zh-CN": "中文(人工)", "ai-zh": "中文(AI识别)" }[lan] || lan;
+  }
+
+  function fmtClock(sec) {
+    const s = Math.max(0, Math.floor(sec || 0));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+    return h ? `${h}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`
+             : `${m}:${String(ss).padStart(2, "0")}`;
+  }
+
+  // json3 字幕 body → 带时间戳的逐行文本;跳过空行和连续重复行(AI 字幕常见)
+  function subtitleToLines(body) {
+    const lines = [];
+    let last = "";
+    for (const seg of body) {
+      const t = (seg.content || "").replace(/\s+/g, " ").trim();
+      if (!t || t === last) continue;
+      last = t;
+      lines.push(`[${fmtClock(seg.from)}] ${t}`);
+    }
+    return lines;
+  }
+
+  function fmtComment(r, idx, isTop) {
+    const uname = (r.member && r.member.uname) || "匿名";
+    const when = new Date((r.ctime || 0) * 1000).toLocaleString("zh-CN", { hour12: false });
+    const out = [
+      `${isTop ? "[置顶] " : ""}#${idx} ${uname} · ${when} · 👍${r.like || 0}`,
+      ((r.content && r.content.message) || "").trim(),
+    ];
+    const subs = r.replies || [];
+    for (const s of subs.slice(0, 3)) {
+      out.push(`    ↳ ${((s.member && s.member.uname) || "?")}: ${((s.content && s.content.message) || "").trim()}`);
+    }
+    if ((r.rcount || 0) > subs.length) out.push(`    (另有 ${r.rcount - subs.length} 条回复)`);
+    return out.filter((x) => x.trim()).join("\n");
+  }
+
+  /* WI-PURE-END */
+
+  async function biliApi(path, params) {
+    const mixinKey = await getWbiKey();
+    const qs = buildWbiQuery(mixinKey, params, Math.floor(Date.now() / 1000));
+    const r = await gmRequest("https://api.bilibili.com" + path + "?" + qs);
+    let j;
+    try { j = JSON.parse(r.responseText); } catch { throw new Error("B站接口返回了非 JSON 内容"); }
+    if (j.code === 0) return j.data;
+    const e = new Error(
+      j.code === -101 ? "B站登录已失效,请先在本页面重新登录"
+      : j.code === -352 ? "B站风控拦截(-352),稍后再试"
+      : `B站接口[${j.code}]: ${j.message || "未知错误"}`,
+    );
+    e.code = j.code;
+    throw e;
+  }
+
+  // nav 接口本身不签名(否则与 biliApi 互相等待造成死锁)
+  let wbiKeyPromise = null;
+  function getWbiKey() {
+    if (!wbiKeyPromise) {
+      const p = gmRequest("https://api.bilibili.com/x/web-interface/nav").then((r) => {
+        let j;
+        try { j = JSON.parse(r.responseText); } catch { throw new Error("B站接口返回了非 JSON 内容"); }
+        // 未登录时 nav 返回 -101,但 wbi_img 照常下发,只看数据在不在
+        if (!j.data || !j.data.wbi_img) throw new Error(`获取 wbi key 失败[${j.code}]`);
+        const stem = (u) => (u || "").split("/").pop().replace(/\.(png|webp)$/, "");
+        const raw = stem(j.data.wbi_img.img_url) + stem(j.data.wbi_img.sub_url);
+        return MIXIN_TAB.map((i) => raw[i]).join("").slice(0, 32);
+      });
+      p.catch(() => { wbiKeyPromise = null; }); // 失败后允许重试
+      wbiKeyPromise = p;
+    }
+    return wbiKeyPromise;
+  }
+
+  // 普通视频页(www/m.bilibili.com 的 BV、av 链接);番剧、影视等不走字幕/评论抓取
+  function getBiliVideoPage() {
+    if (!/^(www|m)?\.bilibili\.com$/.test(location.hostname)) return null;
+    const m = location.pathname.match(/\/video\/([^/]+)/);
+    if (!m) return null;
+    const tok = m[1];
+    const page = parseInt(new URLSearchParams(location.search).get("p") || "1", 10) || 1;
+    if (/^BV[0-9A-Za-z]{10}$/.test(tok)) return { bvid: tok, page };
+    if (/^av\d+$/i.test(tok)) return { bvid: tok.toLowerCase(), page };
+    return null;
+  }
+
+  // 视频信息(aid/cid/标题/UP/分P),同一次面板会话内缓存
+  let viewCache = null;
+  function getView(vp) {
+    const key = vp.bvid + ":" + vp.page;
+    if (viewCache && viewCache.key === key) return viewCache.p;
+    const params = /^av/.test(vp.bvid) ? { aid: parseInt(vp.bvid.slice(2), 10) } : { bvid: vp.bvid };
+    viewCache = {
+      key,
+      p: biliApi("/x/web-interface/view", params).then((d) => {
+        const pages = d.pages || [];
+        const idx = Math.min(vp.page, pages.length || 1) - 1;
+        const pg = pages[idx] || {};
+        return {
+          aid: d.aid, bvid: d.bvid, title: d.title,
+          owner: (d.owner && d.owner.name) || "",
+          cid: pg.cid || d.cid, part: pg.part || "",
+          pageIndex: idx + 1, pages: pages.length || 1, duration: d.duration || 0,
+        };
+      }),
+    };
+    return viewCache.p;
+  }
+
+  function biliItemHeader(v, extra) {
+    const link = "https://www.bilibili.com/video/" + v.bvid + (v.pages > 1 ? "/?p=" + v.pageIndex : "");
+    const L = [`视频: ${v.title}`, `UP主: ${v.owner || "?"}`];
+    if (v.pages > 1) L.push(`分P: ${v.pageIndex}/${v.pages} ${v.part}`.trim());
+    if (v.duration) L.push(`时长: ${fmtClock(v.duration)}`);
+    if (extra) L.push(...extra);
+    L.push(`链接: ${link}`);
+    return { text: L.join("\n"), link };
+  }
+
+  // 返回 { url, baseTitle, suffix, stat, content } 供面板保存
+  async function saveBiliSubtitle(vp) {
+    const v = await getView(vp);
+    const data = await biliApi("/x/player/wbi/v2", { aid: v.aid, bvid: v.bvid, cid: v.cid });
+    const chosen = pickSubtitle((data.subtitle && data.subtitle.subtitles) || []);
+    if (!chosen) throw new Error("没有可用字幕(视频无 CC 字幕,或未登录看不到 AI 字幕)");
+    const r = await gmRequest(String(chosen.subtitle_url).replace(/^\/\//, "https://"));
+    let body;
+    try { body = JSON.parse(r.responseText).body || []; } catch { throw new Error("字幕文件解析失败"); }
+    const lines = subtitleToLines(body);
+    if (!lines.length) throw new Error("字幕内容为空");
+    const head = biliItemHeader(v, [`字幕: ${lanLabel(chosen.lan)} · ${lines.length} 段`]);
+    return {
+      url: head.link, baseTitle: v.title, suffix: "字幕",
+      stat: `已抓取字幕 ${lines.length} 段(${lanLabel(chosen.lan)})`,
+      content: head.text + "\n\n" + lines.join("\n"),
+    };
+  }
+
+  // 评论主接口(网页版同款):按热度 + 游标分页;风控(-352)时带着已抓到的返回
+  async function fetchCommentsMain(v, maxMain) {
+    const main = [];
+    let top = null, allCount = 0, offset = "";
+    for (let i = 0; i < 10 && main.length < maxMain; i++) {
+      let data;
+      try {
+        data = await biliApi("/x/v2/reply/main", {
+          oid: v.aid, type: 1, mode: 3, plat: 1,
+          pagination_str: JSON.stringify({ offset }),
+        });
+      } catch (e) {
+        if (e.code === -352) break;
+        throw e;
+      }
+      if (data.cursor && data.cursor.all_count) allCount = data.cursor.all_count;
+      if (i === 0 && data.top && data.top.upper) top = data.top.upper;
+      const replies = data.replies || [];
+      if (!replies.length) break;
+      main.push(...replies);
+      const next = data.cursor && data.cursor.pagination_reply && data.cursor.pagination_reply.next_offset;
+      if (!next) break;
+      offset = next;
+    }
+    return { main, top, allCount, legacy: false };
+  }
+
+  // 旧版接口兜底:普通分页;未登录时可能只有部分数据,楼中楼同样内嵌在前几条
+  async function fetchCommentsLegacy(v, maxMain) {
+    const main = [];
+    let allCount = 0;
+    for (let pn = 1; pn <= 10 && main.length < maxMain; pn++) {
+      const data = await biliApi("/x/v2/reply", { type: 1, oid: v.aid, sort: 2, pn, ps: 20 });
+      if (data.page && data.page.count) allCount = data.page.count;
+      const replies = data.replies || [];
+      if (!replies.length) break;
+      main.push(...replies);
+    }
+    return { main, top: null, allCount, legacy: true };
+  }
+
+  // 按热度抓主楼评论(含接口附带的楼中楼前几条),最多 100 条
+  async function saveBiliComments(vp, maxMain = 100) {
+    const v = await getView(vp);
+    let { main, top, allCount, legacy } = await fetchCommentsMain(v, maxMain);
+    if (!main.length) ({ main, top, allCount, legacy } = await fetchCommentsLegacy(v, maxMain));
+    const seen = new Set();
+    const uniq = [];
+    for (const r of (top ? [top, ...main] : main)) {
+      const id = r.rpid_str || String(r.rpid);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      uniq.push(r);
+      if (uniq.length >= maxMain) break;
+    }
+    if (!uniq.length) throw new Error("没有抓到评论(接口返回为空)");
+    const blocks = uniq.map((r, i) => fmtComment(r, i + 1, r === top));
+    const head = biliItemHeader(v, [
+      `评论: 按热度,共 ${allCount || "?"} 条,已保存 ${uniq.length} 条(含楼中楼)${legacy ? ",旧接口可能不完整" : ""}`,
+    ]);
+    return {
+      url: head.link, baseTitle: v.title, suffix: "热门评论",
+      stat: `已抓取评论 ${uniq.length}/${allCount || "?"} 条(按热度${legacy ? ",旧接口" : ""})`,
+      content: head.text + "\n\n" + blocks.join("\n\n"),
+    };
+  }
+
   // ---------- 悬浮按钮 ----------
 
   let panelEl = null;
@@ -324,6 +627,7 @@
   // ---- Tab: 当前页 ----
 
   function buildSaveTab(body) {
+    const vp = getBiliVideoPage(); // 普通视频页(BV/av):提供字幕/评论抓取
     const bili = isBiliPage();
     const titleInput = h("input", {
       width: "100%", "box-sizing": "border-box", padding: "8px 10px",
@@ -336,7 +640,82 @@
       "margin-top": "10px", "max-height": "300px", overflow: "auto",
       padding: "10px", background: C.bg2, "border-radius": "8px",
       "white-space": "pre-wrap", "font-size": "13px", color: C.sub,
-    }, "点击「提取正文预览」查看将保存的内容");
+    }, vp
+      ? "「保存字幕」抓取 CC/AI 字幕,「保存评论」按热度抓前 100 条;抓到后自动保存进收集箱。"
+      : "点击「提取正文预览」查看将保存的内容");
+
+    // 视频页动作:抓取 → 直接保存;用户改过标题则沿用,否则用「视频名 · 字幕/热门评论」
+    async function runBiliAction(btn, label, busy, action) {
+      const edited = titleInput.value.trim() && titleInput.value.trim() !== document.title.trim()
+        ? titleInput.value.trim() : null;
+      btn.disabled = true;
+      btn.style.opacity = "0.55";
+      btn.textContent = busy;
+      preview.style.color = C.sub;
+      preview.replaceChildren(busy + ",请稍候…");
+      try {
+        const r = await action();
+        const title = edited || `${r.baseTitle} · ${r.suffix}`;
+        if (!edited) titleInput.value = title;
+        const saved = await gmFetch("POST", "/api/save", {
+          url: r.url,
+          title,
+          site: "www.bilibili.com",
+          type: "bilibili",
+          content: r.content,
+        });
+        savedLocal.unshift(saved);
+        preview.style.color = C.text;
+        const lines = r.content.split("\n");
+        preview.replaceChildren(
+          `${r.stat}\n\n` + lines.slice(0, 50).join("\n") + (lines.length > 50 ? "\n…" : ""),
+        );
+        toast("已保存 ✓");
+      } catch (e) {
+        toast(e.message, true);
+        preview.replaceChildren("✗ " + e.message);
+      }
+      btn.disabled = false;
+      btn.style.opacity = "";
+      btn.textContent = label;
+    }
+
+    // 仅存链接(原 B 站行为:PC 归档脚本负责下载字幕并总结)
+    const saveLink = async (btn) => {
+      btn.disabled = true;
+      try {
+        const saved = await gmFetch("POST", "/api/save", {
+          url: location.href.split("#")[0],
+          title: titleInput.value.trim() || location.href,
+          site: location.hostname,
+          type: "bilibili",
+          content: "",
+        });
+        savedLocal.unshift(saved);
+        toast("已保存 ✓");
+      } catch (e) {
+        toast("保存失败: " + e.message, true);
+      }
+      btn.disabled = false;
+    };
+
+    if (vp) {
+      const subBtn = mkBtn("保存字幕", C.accent, true,
+        () => runBiliAction(subBtn, "保存字幕", "⏳ 抓取字幕中", () => saveBiliSubtitle(vp)));
+      const cmtBtn = mkBtn("保存评论", undefined, false,
+        () => runBiliAction(cmtBtn, "保存评论", "⏳ 抓取评论中", () => saveBiliComments(vp)));
+      const linkBtn = mkBtn("仅存链接", undefined, false, () => saveLink(linkBtn));
+      body.append(
+        h("div", { "font-weight": "600", "margin-bottom": "8px" }, "标题"),
+        titleInput,
+        h("div", { display: "flex", gap: "8px", "margin-top": "10px" }, subBtn, cmtBtn),
+        h("div", { "margin-top": "8px" }, linkBtn),
+        preview,
+        h("div", { "margin-top": "10px", "font-size": "12px", color: C.sub },
+          "检测到 B 站视频页:字幕/评论直接抓进收集箱,双端可看、可生成 AI 总结;「仅存链接」保持原行为,由 PC 归档脚本处理。AI 字幕需要在浏览器登录 B 站。"),
+      );
+      return;
+    }
 
     const result = { lines: null, title: null };
     const extractBtn = mkBtn("提取正文预览", () => {
@@ -354,7 +733,11 @@
     });
 
     const saveBtn = mkBtn("保存到收集箱", C.accent, true, async () => {
-      if (!bili && !result.lines) {
+      if (bili) {
+        await saveLink(saveBtn);
+        return;
+      }
+      if (!result.lines) {
         toast("请先提取正文预览");
         return;
       }
@@ -364,8 +747,8 @@
           url: location.href.split("#")[0],
           title: titleInput.value.trim() || location.href,
           site: location.hostname,
-          type: bili ? "bilibili" : "web",
-          content: bili ? "" : (result.lines || []).join("\n\n"),
+          type: "web",
+          content: (result.lines || []).join("\n\n"),
         });
         savedLocal.unshift(saved);
         toast("已保存 ✓");
@@ -377,7 +760,7 @@
 
     const hint = h("div", { "margin-top": "10px", "font-size": "12px", color: C.sub },
       bili
-        ? "检测到 B 站视频页:只保存链接,PC 归档脚本会自动下载字幕并生成总结。"
+        ? "检测到 B 站页面(番剧/短链等):只保存链接,PC 归档脚本会自动下载字幕并生成总结。"
         : "保存的是提取后的正文(Readability),不是整个页面;PC 归档脚本会把它落盘为 markdown。");
 
     body.append(
