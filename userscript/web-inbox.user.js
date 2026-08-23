@@ -3,7 +3,7 @@
 // @name:en      Web Inbox Saver
 // @description  保存网页正文/B站视频到自己的 Cloudflare Worker,双端 Edge 可用;B站视频可抓取字幕/评论,AI 总结、历史查看、下载归档
 // @namespace    https://github.com/local/web-inbox
-// @version      0.3.0
+// @version      0.4.0
 // @updateURL    https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js
 // @author       you
@@ -775,26 +775,163 @@
 
   // ---- Tab: 已保存列表 ----
 
+  // 跨面板开关保留选择状态(页面刷新即清空)
+  const selectedIds = new Set();
+
   function buildListTab(body) {
+    const bar = h("div", {
+      display: "none", position: "sticky", top: "0", "z-index": "2",
+      background: C.bg, padding: "8px 0", "border-bottom": `1px solid ${C.border}`,
+      "align-items": "center", gap: "8px", "flex-wrap": "wrap",
+    });
+    const listEl = h("div");
+    body.append(bar, listEl);
+    let items = [];
+    let busy = false;
+    const barButtons = {};
+
+    const renderList = () => {
+      listEl.replaceChildren();
+      if (!items.length) {
+        listEl.append(h("div", { color: C.sub, padding: "20px", "text-align": "center" }, "还没有保存过内容"));
+        return;
+      }
+      for (const it of items) listEl.append(renderListItem(it, renderBar));
+    };
+
+    function renderBar() {
+      bar.replaceChildren();
+      const n = selectedIds.size;
+      bar.style.display = n ? "flex" : "none";
+      if (!n) return;
+      bar.append(h("div", { color: C.accent, "font-size": "13px", "font-weight": "600" }, `已选 ${n} 项`));
+
+      const allBox = mkCheckbox(items.length > 0 && items.every((it) => selectedIds.has(it.id)));
+      allBox.addEventListener("change", () => {
+        for (const it of items) {
+          if (allBox.checked) selectedIds.add(it.id);
+          else selectedIds.delete(it.id);
+        }
+        renderList();
+        renderBar();
+      });
+      bar.append(h("label", {
+        display: "flex", "align-items": "center", gap: "4px",
+        "font-size": "12px", color: C.sub, cursor: "pointer",
+      }, allBox, "全选"));
+
+      const defs = [
+        ["sum", "AI 总结", undefined, batchSummarize],
+        ["dl", "下载 .md", undefined, batchDownload],
+        ["del", "删除", C.danger, batchDelete],
+        ["cancel", "取消选择", undefined, clearSelection],
+      ];
+      for (const [key, label, color, fn] of defs) {
+        const b = mkBtn(label, color, false, fn);
+        b.disabled = busy;
+        b.style.opacity = busy ? "0.55" : "";
+        barButtons[key] = b;
+        bar.append(b);
+      }
+    }
+
+    function clearSelection() {
+      if (busy) return;
+      selectedIds.clear();
+      renderList();
+      renderBar();
+    }
+
+    async function batchDelete() {
+      if (busy || !confirm(`确定删除选中的 ${selectedIds.size} 条?`)) return;
+      busy = true;
+      renderBar();
+      const ids = [...selectedIds];
+      let ok = 0, fail = 0;
+      for (let i = 0; i < ids.length; i++) {
+        barButtons.del.textContent = `删除中 ${i + 1}/${ids.length}…`;
+        try {
+          await gmFetch("DELETE", "/api/item/" + ids[i]);
+          ok++;
+          selectedIds.delete(ids[i]);
+          const idx = savedLocal.findIndex((x) => x.id === ids[i]);
+          if (idx >= 0) savedLocal.splice(idx, 1);
+        } catch { fail++; }
+      }
+      busy = false;
+      toast(fail ? `删除完成:成功 ${ok},失败 ${fail}` : `已删除 ${ok} 条 ✓`);
+      switchTab("list");
+    }
+
+    // 只总结有正文且尚未总结的;无正文(B站链接)与已有总结的跳过
+    async function batchSummarize() {
+      if (busy) return;
+      const targets = items.filter((it) => selectedIds.has(it.id) && it.has_content && !it.has_summary);
+      const skipped = selectedIds.size - targets.length;
+      if (!targets.length) {
+        toast("所选条目都没有可总结的正文(无正文或已有总结)");
+        return;
+      }
+      if (!confirm(
+        `为 ${targets.length} 条生成 AI 总结?\n每条约 30~60 秒,期间请保持面板打开` +
+        (skipped ? `\n(另有 ${skipped} 条无正文/已有总结,将跳过)` : ""),
+      )) return;
+      busy = true;
+      renderBar();
+      let ok = 0, fail = 0;
+      for (let i = 0; i < targets.length; i++) {
+        barButtons.sum.textContent = `⏳ 总结中 ${i + 1}/${targets.length}`;
+        try {
+          await gmFetch("POST", "/api/summarize", { id: targets[i].id });
+          ok++;
+        } catch { fail++; }
+      }
+      busy = false;
+      toast(`总结完成:成功 ${ok},失败 ${fail}` + (skipped ? `,跳过 ${skipped} 条` : ""));
+      switchTab("list");
+    }
+
+    // 所选合并导出为一个 markdown(多条逐个下载会被浏览器拦截)
+    async function batchDownload() {
+      if (busy) return;
+      busy = true;
+      renderBar();
+      barButtons.dl.textContent = "打包中…";
+      try {
+        const { items: fullItems } = await gmFetch("GET", "/api/items?full=1");
+        const byId = new Map(fullItems.map((x) => [x.id, x]));
+        const chosen = items
+          .filter((it) => selectedIds.has(it.id))
+          .map((it) => byId.get(it.id) || savedLocal.find((x) => x.id === it.id) || it);
+        if (!chosen.length) throw new Error("没有可导出的条目");
+        const date = new Date().toISOString().slice(0, 10);
+        downloadText(`收集箱导出-${chosen.length}条-${date}.md`, buildExportMd(chosen));
+        toast(`已导出 ${chosen.length} 条 ✓`);
+      } catch (e) {
+        toast("导出失败: " + e.message, true);
+      }
+      busy = false;
+      renderBar();
+    }
+
     const loading = h("div", { color: C.sub, padding: "20px", "text-align": "center" }, "加载中…");
-    body.append(loading);
+    listEl.append(loading);
     gmFetch("GET", "/api/items")
-      .then(({ items }) => {
-        body.replaceChildren();
+      .then(({ items: remote }) => {
         // 合并本地暂存的新条目(KV 传播延迟期间),已传播到的从暂存中清掉
-        const remoteIds = new Set(items.map((x) => x.id));
+        const remoteIds = new Set(remote.map((x) => x.id));
         for (let i = savedLocal.length - 1; i >= 0; i--) {
           if (remoteIds.has(savedLocal[i].id)) savedLocal.splice(i, 1);
         }
         const localMerged = savedLocal
           .filter((x) => !remoteIds.has(x.id))
           .map((x) => ({ ...x, has_summary: !!x.summary, has_content: !!x.content }));
-        items = localMerged.concat(items);
-        if (!items.length) {
-          body.append(h("div", { color: C.sub, padding: "20px", "text-align": "center" }, "还没有保存过内容"));
-          return;
-        }
-        for (const it of items) body.append(renderListItem(it));
+        items = localMerged.concat(remote);
+        // 列表里已不存在的选择项清掉
+        const ids = new Set(items.map((x) => x.id));
+        for (const id of [...selectedIds]) if (!ids.has(id)) selectedIds.delete(id);
+        renderList();
+        renderBar();
       })
       .catch((e) => {
         loading.textContent = "加载失败: " + e.message;
@@ -802,19 +939,40 @@
       });
   }
 
-  function renderListItem(it) {
+  function mkCheckbox(checked) {
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!checked;
+    cb.style.setProperty("width", "16px");
+    cb.style.setProperty("height", "16px");
+    cb.style.setProperty("accent-color", C.accent);
+    cb.style.setProperty("cursor", "pointer");
+    cb.style.setProperty("flex-shrink", "0");
+    return cb;
+  }
+
+  function renderListItem(it, onChange) {
     const date = new Date(it.created_at).toLocaleString("zh-CN", { hour12: false });
     const badges = h("span", { "font-size": "11px" },
       it.type === "bilibili" ? " 📺B站" : "",
       it.has_summary ? " ✨已总结" : "",
       it.status === "archived" ? " ✅已归档" : "");
-    const row = h("div", {
-      padding: "10px", "border-bottom": `1px solid ${C.border}`, cursor: "pointer",
-    },
-      h("div", { "font-weight": "600", "overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }, it.title),
+    const cb = mkCheckbox(selectedIds.has(it.id));
+    cb.addEventListener("click", (e) => e.stopPropagation());
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedIds.add(it.id);
+      else selectedIds.delete(it.id);
+      onChange();
+    });
+    const textBlock = h("div", { flex: "1", "min-width": "0" },
+      h("div", { "font-weight": "600", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }, it.title),
       h("div", { "font-size": "12px", color: C.sub, "margin-top": "2px" }, `${it.site} · ${date}`, badges),
     );
-    row.addEventListener("click", () => openDetail(row, it.id));
+    const row = h("div", {
+      display: "flex", "align-items": "flex-start",
+      padding: "10px", "border-bottom": `1px solid ${C.border}`,
+    }, cb, textBlock);
+    textBlock.addEventListener("click", () => openDetail(row, it.id));
     return row;
   }
 
@@ -877,6 +1035,21 @@
       })
       .catch((e) => toast(e.message, true));
   }
+
+  /* WI-PURE-BEGIN —— 批量导出格式化:无 DOM/网络依赖,test-bili.mjs 会抽取做单测 */
+  function buildExportMd(items) {
+    const when = new Date().toLocaleString("zh-CN", { hour12: false });
+    const parts = [`# Web Inbox 批量导出\n\n> 共 ${items.length} 条 · ${when}`];
+    items.forEach((it, i) => {
+      parts.push(
+        `## ${i + 1}. ${it.title}\n\n` +
+        `- 来源: ${it.url}\n- 时间: ${new Date(it.created_at).toLocaleString("zh-CN", { hour12: false })}\n\n` +
+        `### AI 总结\n\n${it.summary || "(无)"}\n\n### 正文\n\n${it.content || "(B站视频,正文见归档文件夹)"}`,
+      );
+    });
+    return parts.join("\n\n---\n\n") + "\n";
+  }
+  /* WI-PURE-END */
 
   function downloadText(filename, text) {
     const a = document.createElement("a");
