@@ -42,18 +42,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: 等待 jsDelivr 同步新版本后 purge
+      - name: 等待 jsDelivr 源站同步新版本后 purge
         run: |
           VER=$(grep -m1 '@version' userscript/web-inbox.user.js | awk '{print $3}')
+          HASH=$(openssl dgst -sha256 -binary userscript/web-inbox.user.js | base64)
+          API="https://data.jsdelivr.com/v1/packages/gh/MuYukk1/web-inbox-worker@main?structure=flat"
           URL="https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js"
           for i in $(seq 1 8); do
             sleep 60
-            GOT=$(curl -fsS "$URL" | grep -m1 '@version' | awk '{print $3}' || true)
-            echo "第 $i 次检查: CDN 返回 ${GOT:-无}, 期望 $VER"
-            if [ "$GOT" = "$VER" ]; then
+            GOT=$(curl -fsS "$API" | grep -A1 '"name": "/userscript/web-inbox.user.js"' | grep -oE '"hash": "[^"]+"' | cut -d'"' -f4 || true)
+            echo "第 $i 次检查: 源站 hash=${GOT:-无}"
+            if [ "$GOT" = "$HASH" ]; then
               curl -fsS --retry 3 "https://purge.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js" | grep -q '"throttled": *false'
-              echo "已确认 v$VER 并 purge 完成"
+              sleep 10
+              GOTVER=$(curl -fsS "$URL" | grep -m1 '@version' | awk '{print $3}' || true)
+              if [ "$GOTVER" = "$VER" ]; then
+                echo "源站已同步,purge 后 CDN 确认 v$VER ✓"
+                exit 0
+              fi
+              echo "purge 后 CDN 仍返回 ${GOTVER:-无},再 purge 一次"
+              curl -fsS --retry 3 "https://purge.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js" >/dev/null
               exit 0
             fi
           done
-          echo "::warning::jsDelivr 8 分钟内未同步到 v$VER,本次跳过 purge 避免刷新到旧版本;CDN 会自然过期更新"
+          echo "::warning::jsDelivr 源站 8 分钟内未同步 v$VER(hash 不匹配),跳过 purge;CDN 稍后自然更新"
