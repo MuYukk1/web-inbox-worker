@@ -29,6 +29,7 @@ t("根路径健康检查", (await req("GET", "/")).data.ok === true);
 
 const save = await req("POST", "/api/save", { url: "https://example.com/a", title: "测试网页", content: "正文内容", type: "web" }, "test-token");
 t("保存返回 32 位 id", /^[a-f0-9]{32}$/.test(save.data.id));
+t("保存返回完整条目(供客户端本地合并)", save.data.title === "测试网页" && save.data.status === "pending");
 
 const list = await req("GET", "/api/items", null, "test-token");
 t("列表含 1 条且不返回正文", list.data.items.length === 1 && list.data.items[0].has_content === true && !("content" in list.data.items[0]));

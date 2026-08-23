@@ -113,7 +113,8 @@ export default {
         archive: null,
       };
       await KV.put("item:" + item.id, JSON.stringify(item));
-      return json({ id: item.id });
+      // 返回完整条目:客户端本地合并进列表,规避 KV 最终一致性(最长约60s)带来的显示延迟
+      return json(item);
     }
 
     // ---- 列表 ----
