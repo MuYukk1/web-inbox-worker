@@ -34,3 +34,15 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  purge-cdn:
+    # jsDelivr 对 @main 分支缓存最长 12h,push 后主动刷新让油猴脚本尽快拿到更新
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Purge jsDelivr cache
+        run: |
+          sleep 60  # 等 jsDelivr 数据层同步新 commit
+          curl -fsS --retry 3 --retry-delay 30 \
+            "https://purge.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js" \
+            | tee /dev/stderr | grep -q '"throttled": *false'
