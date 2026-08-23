@@ -36,13 +36,24 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   purge-cdn:
-    # jsDelivr 对 @main 分支缓存最长 12h,push 后主动刷新让油猴脚本尽快拿到更新
+    # jsDelivr 对 @main 分支缓存最长 12h,且数据层多副本短时间内可能返回不同版本;
+    # 必须先确认 CDN 已拿到新版本再 purge,否则会把旧版本重新刷进边缘节点
     needs: deploy
     runs-on: ubuntu-latest
     steps:
-      - name: Purge jsDelivr cache
+      - uses: actions/checkout@v4
+      - name: 等待 jsDelivr 同步新版本后 purge
         run: |
-          sleep 60  # 等 jsDelivr 数据层同步新 commit
-          curl -fsS --retry 3 --retry-delay 30 \
-            "https://purge.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js" \
-            | tee /dev/stderr | grep -q '"throttled": *false'
+          VER=$(grep -m1 '@version' userscript/web-inbox.user.js | awk '{print $3}')
+          URL="https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js"
+          for i in $(seq 1 8); do
+            sleep 60
+            GOT=$(curl -fsS "$URL" | grep -m1 '@version' | awk '{print $3}' || true)
+            echo "第 $i 次检查: CDN 返回 ${GOT:-无}, 期望 $VER"
+            if [ "$GOT" = "$VER" ]; then
+              curl -fsS --retry 3 "https://purge.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js" | grep -q '"throttled": *false'
+              echo "已确认 v$VER 并 purge 完成"
+              exit 0
+            fi
+          done
+          echo "::warning::jsDelivr 8 分钟内未同步到 v$VER,本次跳过 purge 避免刷新到旧版本;CDN 会自然过期更新"
