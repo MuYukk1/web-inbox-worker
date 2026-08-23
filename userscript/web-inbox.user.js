@@ -3,7 +3,7 @@
 // @name:en      Web Inbox Saver
 // @description  保存网页正文/B站视频到自己的 Cloudflare Worker,双端 Edge 可用;B站视频可抓取字幕/评论,AI 总结、历史查看、下载归档
 // @namespace    https://github.com/local/web-inbox
-// @version      0.4.0
+// @version      0.5.0
 // @updateURL    https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js
 // @author       you
@@ -560,6 +560,47 @@
 
   // ---------- 面板 ----------
 
+  // 版本信息:当前版本号 + 对照更新源是否最新(结果缓存 10 分钟)
+  const UPDATE_URL = "https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js";
+  const SCRIPT_VERSION =
+    (typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version) || "0.5.0";
+  let versionCache = null;
+
+  function renderVersionFooter(el, v) {
+    el.replaceChildren(`Web Inbox v${SCRIPT_VERSION} · `);
+    if (v.mode === "latest") {
+      el.append("✓ 已是最新");
+    } else if (v.mode === "old") {
+      const a = h("span", { color: C.accent, cursor: "pointer", "text-decoration": "underline" },
+        `可更新 → v${v.latest}`);
+      a.title = "点击打开脚本页安装;也可在油猴菜单 → 管理面板 → 实用工具 → 从 URL 安装";
+      a.addEventListener("click", () => window.open(UPDATE_URL, "_blank"));
+      el.append(a);
+    } else {
+      el.append("检查更新失败");
+    }
+  }
+
+  function initVersionFooter(el) {
+    if (versionCache && Date.now() - versionCache.at < 10 * 60 * 1000) {
+      renderVersionFooter(el, versionCache);
+      return;
+    }
+    el.textContent = `Web Inbox v${SCRIPT_VERSION} · 检查更新中…`;
+    gmRequest(UPDATE_URL)
+      .then((r) => {
+        const m = (r.responseText || "").match(/@version\s+([0-9][0-9.]*)/);
+        if (!m) throw new Error("bad version");
+        versionCache = {
+          at: Date.now(),
+          latest: m[1],
+          mode: cmpVersion(m[1], SCRIPT_VERSION) > 0 ? "old" : "latest",
+        };
+      })
+      .catch(() => { versionCache = { at: Date.now(), mode: "error" }; })
+      .then(() => { if (el.isConnected) renderVersionFooter(el, versionCache); });
+  }
+
   function togglePanel() {
     if (panelEl) { closePanel(); return; }
     panelEl = buildPanel();
@@ -581,8 +622,13 @@
     });
     overlay.addEventListener("click", (e) => { if (e.target === overlay) closePanel(); });
 
-    const tabs = h("div", { display: "flex", "border-bottom": `1px solid ${C.border}` });
+    const tabs = h("div", { display: "flex", "border-bottom": `1px solid ${C.border}`, "flex-shrink": "0" });
     const body = h("div", { flex: "1", overflow: "auto", padding: "14px" });
+    const footer = h("div", {
+      display: "flex", "justify-content": "space-between", "align-items": "center",
+      padding: "6px 14px", "border-top": `1px solid ${C.border}`,
+      "font-size": "11px", color: C.sub, "flex-shrink": "0",
+    });
     const panel = h("div", {
       width: "min(94vw, 500px)", height: "min(86vh, 720px)",
       background: C.bg, color: C.text, "border-radius": "14px",
@@ -590,7 +636,7 @@
       "font-size": "14px", "line-height": "1.6",
       "font-family": "system-ui,-apple-system,'Segoe UI',Roboto,sans-serif",
       "box-shadow": "0 12px 48px rgba(0,0,0,0.35)",
-    }, tabs, body);
+    }, tabs, body, footer);
     panel.setAttribute("data-wi-ui", "1");
 
     for (const [key, label] of [["save", "当前页"], ["list", "已保存"], ["settings", "设置"]]) {
@@ -606,6 +652,7 @@
 
     const state = { panel, body };
     panel._state = state;
+    initVersionFooter(footer);
     overlay.append(panel);
     return overlay;
   }
@@ -619,7 +666,7 @@
       b.style.color = k === key ? C.accent : C.sub;
       b.style.borderBottomColor = k === key ? C.accent : "transparent";
     }
-    const body = panel.lastChild;
+    const body = panel._state.body;
     body.replaceChildren();
     tabPages[key](body);
   }
@@ -779,8 +826,9 @@
   const selectedIds = new Set();
 
   function buildListTab(body) {
+    // 常驻批量栏:未选择时按钮置灰而不是隐藏,避免出现/消失导致列表跳动
     const bar = h("div", {
-      display: "none", position: "sticky", top: "0", "z-index": "2",
+      display: "flex", position: "sticky", top: "0", "z-index": "2",
       background: C.bg, padding: "8px 0", "border-bottom": `1px solid ${C.border}`,
       "align-items": "center", gap: "8px", "flex-wrap": "wrap",
     });
@@ -802,11 +850,12 @@
     function renderBar() {
       bar.replaceChildren();
       const n = selectedIds.size;
-      bar.style.display = n ? "flex" : "none";
-      if (!n) return;
-      bar.append(h("div", { color: C.accent, "font-size": "13px", "font-weight": "600" }, `已选 ${n} 项`));
+      bar.append(h("div", {
+        color: n ? C.accent : C.sub, "font-size": "13px", "font-weight": "600",
+      }, n ? `已选 ${n} 项` : "批量操作"));
 
       const allBox = mkCheckbox(items.length > 0 && items.every((it) => selectedIds.has(it.id)));
+      allBox.disabled = busy || !items.length;
       allBox.addEventListener("change", () => {
         for (const it of items) {
           if (allBox.checked) selectedIds.add(it.id);
@@ -817,7 +866,7 @@
       });
       bar.append(h("label", {
         display: "flex", "align-items": "center", gap: "4px",
-        "font-size": "12px", color: C.sub, cursor: "pointer",
+        "font-size": "12px", color: C.sub, cursor: allBox.disabled ? "default" : "pointer",
       }, allBox, "全选"));
 
       const defs = [
@@ -828,8 +877,8 @@
       ];
       for (const [key, label, color, fn] of defs) {
         const b = mkBtn(label, color, false, fn);
-        b.disabled = busy;
-        b.style.opacity = busy ? "0.55" : "";
+        b.disabled = busy || n === 0;
+        b.style.opacity = b.disabled ? "0.55" : "";
         barButtons[key] = b;
         bar.append(b);
       }
@@ -914,6 +963,7 @@
       renderBar();
     }
 
+    renderBar(); // 列表加载期间批量栏先常驻显示
     const loading = h("div", { color: C.sub, padding: "20px", "text-align": "center" }, "加载中…");
     listEl.append(loading);
     gmFetch("GET", "/api/items")
@@ -1036,7 +1086,18 @@
       .catch((e) => toast(e.message, true));
   }
 
-  /* WI-PURE-BEGIN —— 批量导出格式化:无 DOM/网络依赖,test-bili.mjs 会抽取做单测 */
+  /* WI-PURE-BEGIN —— 批量导出/版本比较:无 DOM/网络依赖,test-bili.mjs 会抽取做单测 */
+  // 语义化版本比较("0.10.0" > "0.9.0"),返回 -1/0/1
+  function cmpVersion(a, b) {
+    const pa = String(a).split(".").map(Number);
+    const pb = String(b).split(".").map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const x = pa[i] || 0, y = pb[i] || 0;
+      if (x !== y) return x < y ? -1 : 1;
+    }
+    return 0;
+  }
+
   function buildExportMd(items) {
     const when = new Date().toLocaleString("zh-CN", { hour12: false });
     const parts = [`# Web Inbox 批量导出\n\n> 共 ${items.length} 条 · ${when}`];

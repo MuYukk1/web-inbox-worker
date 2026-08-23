@@ -6,25 +6,75 @@
 
 ## 安装油猴脚本
 
-Tampermonkey(篡改猴)中新建脚本,或直接在**装有 Tampermonkey 的浏览器**打开下面的安装地址:
+**安装地址(CDN 加速):**
 
-- 安装/更新地址(CDN 加速):`https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js`
-- 源文件:`userscript/web-inbox.user.js`
+```
+https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js
+```
 
-脚本头部已配置 `@updateURL` / `@downloadURL`,Tampermonkey 会定期自动检查更新(也可以在 TM 管理面板手动点"检查更新")。注意 jsDelivr CDN 有数小时缓存,刚 push 的新版本可能要等缓存刷新;急着用时从仓库 raw 地址手动安装。
+推荐统一用「**从 URL 安装**」,安装和更新走同一条路:
 
-## 通过 GitHub Action 自动部署
+1. 浏览器安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展(桌面 Edge/Chrome 的应用商店;安卓 Edge 商店同样上架了 Tampermonkey,双端用同一份脚本)
+2. 点击浏览器工具栏的 Tampermonkey 图标 → **管理面板**
+3. 切到「**实用工具**」标签 → 找到「**从 URL 安装**」→ 粘贴上面的安装地址 → 点「安装」
+4. 首次使用:任意网页点右下角 📥 悬浮按钮 → 「设置」→ 填 **Worker 地址**(部署后得到的 `https://<name>.<account>.workers.dev`)和 **Token**(部署时的 `WORKER_TOKEN`)→ 保存
 
-推送(或手动触发)即自动测试并部署。需要在仓库 **Settings → Secrets and variables → Actions** 添加 4 个 secrets:
+**更新方式**(任选其一):
 
-| Secret | 说明 | 获取方式 |
-|---|---|---|
-| `CLOUDFLARE_API_TOKEN` | 部署凭证 | [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) → 用 **Edit Cloudflare Workers** 模板创建 |
-| `CLOUDFLARE_ACCOUNT_ID` | 账户 ID | Cloudflare Dashboard 首页右侧栏 |
-| `KV_NAMESPACE_ID` | KV 命名空间 ID | 本地或 [dashboard](https://dash.cloudflare.com) 创建一次:`npx wrangler kv namespace create KV`,取输出的 `id` |
-| `WORKER_TOKEN` | 客户端鉴权 Token | 自己生成一串随机字符(油猴脚本与 PC 脚本设置里填同一个值) |
+- **自动**:脚本头部带 `@updateURL` / `@downloadURL`,Tampermonkey 会定期后台检查并提示更新
+- **手动检查**:管理面板 → 已安装脚本里选中本脚本 → 「实用工具」→「检查更新」
+- **直接覆盖**:重复上面的「从 URL 安装」,同名同 namespace 原地覆盖,本地设置不丢
 
-真实配置不进仓库:`wrangler.toml` 中为占位符,部署时由 Action 注入。
+> CI 在每次部署后会自动刷新 jsDelivr CDN 缓存,正常发布几分钟后即可更新到新版。收集箱面板底部会显示当前版本号,有新版时可直接点击打开安装页。
+
+## 部署 Cloudflare Worker(完整步骤)
+
+后端跑在 Cloudflare 免费额度上,零常驻服务,不需要本地环境,全程约 10 分钟。
+
+### 1. Fork 本仓库
+
+点右上角 Fork。Fork 后到仓库 **Actions** 标签页确认工作流已启用(若提示则点 "I understand my workflows, go ahead and enable them")。
+
+### 2. 创建 KV 命名空间
+
+[Cloudflare Dashboard](https://dash.cloudflare.com) → 左侧 **Storage & Databases → KV**(旧版界面在 **Workers & Pages → KV**)→ **Create namespace**,名字随意(如 `web-inbox`)→ 进入详情**复制 Namespace ID**(32 位十六进制串)。
+
+也可以用 CLI:`npx wrangler kv namespace create KV`,取输出中的 `id`。
+
+### 3. 记下 Account ID
+
+Dashboard 首页右侧栏(或任意域名 Overview 页右下角)的 **Account ID**,复制。
+
+### 4. 创建 API Token
+
+[Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token** → 选 **"Edit Cloudflare Workers"** 模板(已包含部署 Worker 与操作 KV 所需权限)→ Create Token → **复制生成的 token**(只显示一次)。
+
+### 5. 配置仓库 Secrets
+
+Fork 的仓库 → **Settings → Secrets and variables → Actions** → **New repository secret**,逐个添加:
+
+| Secret | 值 |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | 第 4 步生成的 token |
+| `CLOUDFLARE_ACCOUNT_ID` | 第 3 步的 Account ID |
+| `KV_NAMESPACE_ID` | 第 2 步的命名空间 ID |
+| `WORKER_TOKEN` | 自己生成的一串随机字符(≥32 位),作为客户端访问口令;油猴脚本设置页与 PC 脚本配置里填同一个值 |
+
+### 6. (可选)改 Worker 名字
+
+`wrangler.toml` 中 `name = "web-inbox"` 可改成自己的名字,它决定访问域名 `https://<name>.<account-subdomain>.workers.dev`。
+
+### 7. 部署与验证
+
+推送到 main(或在 **Actions → Test & Deploy → Run workflow** 手动触发)→ 等所有任务变绿 → 浏览器打开 `https://<name>.<account-subdomain>.workers.dev/`,看到:
+
+```json
+{"app": "web-inbox", "ok": true, "hint": "服务正常,请通过油猴脚本或 PC 脚本访问"}
+```
+
+即部署成功。回到油猴脚本「设置」页填入 Worker 地址和 Token 即可使用。
+
+> `wrangler.toml` 里的 `__KV_ID__` / `__WORKER_TOKEN__` 是占位符,部署时由 Action 从 Secrets 注入,真实值不会进仓库。
 
 ## 本地开发
 
