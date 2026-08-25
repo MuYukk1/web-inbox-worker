@@ -3,7 +3,7 @@
 // @name:en      Web Inbox Saver
 // @description  保存网页正文/B站视频到自己的 Cloudflare Worker,双端 Edge 可用;B站视频可抓取字幕/评论,AI 总结、历史查看、下载归档
 // @namespace    https://github.com/local/web-inbox
-// @version      0.5.0
+// @version      0.5.1
 // @updateURL    https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js
 // @author       you
@@ -335,10 +335,12 @@
       ((r.content && r.content.message) || "").trim(),
     ];
     const subs = r.replies || [];
-    for (const s of subs.slice(0, 3)) {
+    // 未整楼抓取时只展示接口内嵌的前几条预览
+    const shown = r.fullReplies ? subs : subs.slice(0, 3);
+    for (const s of shown) {
       out.push(`    ↳ ${((s.member && s.member.uname) || "?")}: ${((s.content && s.content.message) || "").trim()}`);
     }
-    if ((r.rcount || 0) > subs.length) out.push(`    (另有 ${r.rcount - subs.length} 条回复)`);
+    if ((r.rcount || 0) > shown.length) out.push(`    (另有 ${r.rcount - shown.length} 条回复)`);
     return out.filter((x) => x.trim()).join("\n");
   }
 
@@ -484,8 +486,29 @@
     return { main, top: null, allCount, legacy: true };
   }
 
+  // 楼中楼接口:按 root 分页拉取某条主楼下的全部回复
+  async function fetchReplies(v, root, onProgress) {
+    const all = [];
+    for (let pn = 1; pn <= 20; pn++) {
+      let data;
+      try {
+        data = await biliApi("/x/v2/reply/reply", { type: 1, oid: v.aid, root, pn, ps: 20 });
+      } catch (e) {
+        if (e.code === -352) break;
+        throw e;
+      }
+      const replies = data.replies || [];
+      if (!replies.length) break;
+      all.push(...replies);
+      const count = (data.page && data.page.count) || all.length;
+      if (all.length >= count) break;
+    }
+    onProgress && onProgress(all.length);
+    return all;
+  }
+
   // 按热度抓主楼评论(含接口附带的楼中楼前几条),最多 100 条
-  async function saveBiliComments(vp, maxMain = 100) {
+  async function saveBiliComments(vp, maxMain = 100, onProgress) {
     const v = await getView(vp);
     let { main, top, allCount, legacy } = await fetchCommentsMain(v, maxMain);
     if (!main.length) ({ main, top, allCount, legacy } = await fetchCommentsLegacy(v, maxMain));
@@ -499,13 +522,32 @@
       if (uniq.length >= maxMain) break;
     }
     if (!uniq.length) throw new Error("没有抓到评论(接口返回为空)");
+    // 楼中楼整楼抓取:内嵌预览装不下(r.count > 3)的主楼,翻页拉全回复
+    let replyTotal = 0;
+    const needFull = uniq.filter((r) => (r.rcount || 0) > (r.replies || []).length);
+    for (let i = 0; i < needFull.length; i++) {
+      const r = needFull[i];
+      const full = await fetchReplies(v, r.rpid_str || String(r.rpid));
+      if (full.length) {
+        // 去掉与内嵌预览重复的,楼中楼按时间正序展示
+        const seenSub = new Set(full.map((s) => s.rpid_str || String(s.rpid)));
+        const extra = (r.replies || []).filter((s) => !seenSub.has(s.rpid_str || String(s.rpid)));
+        r.replies = [...full, ...extra].sort((a, b) => (a.ctime || 0) - (b.ctime || 0));
+        r.fullReplies = true;
+        replyTotal += r.replies.length;
+      }
+      if (onProgress) onProgress(`楼中楼 ${i + 1}/${needFull.length}(已取 ${replyTotal} 条回复)`);
+    }
     const blocks = uniq.map((r, i) => fmtComment(r, i + 1, r === top));
     const head = biliItemHeader(v, [
-      `评论: 按热度,共 ${allCount || "?"} 条,已保存 ${uniq.length} 条(含楼中楼)${legacy ? ",旧接口可能不完整" : ""}`,
+      `评论: 按热度,共 ${allCount || "?"} 条,已保存 ${uniq.length} 条` +
+        (needFull.length ? `,含楼中楼 ${replyTotal} 条` : "(含楼中楼)") +
+        (legacy ? ",旧接口可能不完整" : ""),
     ]);
     return {
       url: head.link, baseTitle: v.title, suffix: "热门评论",
-      stat: `已抓取评论 ${uniq.length}/${allCount || "?"} 条(按热度${legacy ? ",旧接口" : ""})`,
+      stat: `已抓取评论 ${uniq.length}/${allCount || "?"} 条` +
+        (needFull.length ? ` + 楼中楼 ${replyTotal} 条` : ""),
       content: head.text + "\n\n" + blocks.join("\n\n"),
     };
   }
@@ -698,10 +740,11 @@
       btn.disabled = true;
       btn.style.opacity = "0.55";
       btn.textContent = busy;
+      const progress = (msg) => { btn.textContent = busy + " · " + msg; };
       preview.style.color = C.sub;
       preview.replaceChildren(busy + ",请稍候…");
       try {
-        const r = await action();
+        const r = await action(progress);
         const title = edited || `${r.baseTitle} · ${r.suffix}`;
         if (!edited) titleInput.value = title;
         const saved = await gmFetch("POST", "/api/save", {
@@ -750,7 +793,7 @@
       const subBtn = mkBtn("保存字幕", C.accent, true,
         () => runBiliAction(subBtn, "保存字幕", "⏳ 抓取字幕中", () => saveBiliSubtitle(vp)));
       const cmtBtn = mkBtn("保存评论", undefined, false,
-        () => runBiliAction(cmtBtn, "保存评论", "⏳ 抓取评论中", () => saveBiliComments(vp)));
+        () => runBiliAction(cmtBtn, "保存评论", "⏳ 抓取评论中", (prog) => saveBiliComments(vp, 100, prog)));
       const linkBtn = mkBtn("仅存链接", undefined, false, () => saveLink(linkBtn));
       body.append(
         h("div", { "font-weight": "600", "margin-bottom": "8px" }, "标题"),
