@@ -1,5 +1,21 @@
 // Worker 路由逻辑集成测试(stub KV,不跑真实 LLM)
-import mod from "../index.js";
+// 与 wrangler.toml 的 Text 模块规则一致:*.user.js 按纯文本导入
+import { registerHooks } from "node:module";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+registerHooks({
+  load(url, context, nextLoad) {
+    if (url.endsWith(".user.js")) {
+      const source = "export default " + JSON.stringify(readFileSync(fileURLToPath(url), "utf8"));
+      return { source, format: "module", shortCircuit: true };
+    }
+    return nextLoad(url, context);
+  },
+});
+
+// 静态 import 会在 registerHooks 之前求值,必须动态导入
+const { default: mod } = await import("../index.js");
 
 const KV = {
   store: new Map(),
@@ -58,6 +74,15 @@ t("LLM 调用失败返回结构化错误", sumFail.status === 502 && sumFail.dat
 await req("DELETE", "/api/item/" + biliSave.data.id, null, "test-token");
 t("删除成功", (await req("DELETE", "/api/item/" + id, null, "test-token")).data.ok === true);
 t("删除后列表为空", (await req("GET", "/api/items", null, "test-token")).data.items.length === 0);
+
+// userscript 分发路由(公开,免 token)
+{
+  const r = await mod.fetch(new Request("https://w.dev/userscript.user.js"), env);
+  const text = await r.text();
+  t("userscript 路由免鉴权可访问", r.status === 200);
+  t("userscript 内容为脚本本体(含版本头)", text.includes("==UserScript==") && /@version\s+0\.\d+\.\d+/.test(text));
+  t("userscript 响应头正确", (r.headers.get("content-type") || "").includes("text/javascript") && r.headers.get("cache-control") === "no-cache");
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -3,9 +3,8 @@
 // @name:en      Web Inbox Saver
 // @description  保存网页正文/B站视频到自己的 Cloudflare Worker,双端 Edge 可用;B站视频可抓取字幕/评论,AI 总结、历史查看、下载归档
 // @namespace    https://github.com/local/web-inbox
-// @version      0.5.1
-// @updateURL    https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js
-// @downloadURL  https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js
+// @version      0.6.0
+// @updateURL    /userscript.user.js
 // @author       you
 // @match        *://*/*
 // @noframes
@@ -602,10 +601,14 @@
 
   // ---------- 面板 ----------
 
-  // 版本信息:当前版本号 + 对照更新源是否最新(结果缓存 10 分钟)
-  const UPDATE_URL = "https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js";
+  // 版本信息:当前版本号 + 对照 Worker 自身的脚本路由是否最新(结果缓存 10 分钟)
+  // 更新源 = 已配置的 Worker 地址 + /userscript.user.js(Worker 托管脚本,部署即最新)
+  const updateUrl = () => {
+    const base = ($storage.get().worker || "").replace(/\/+$/, "");
+    return base ? base + "/userscript.user.js" : "";
+  };
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version) || "0.5.0";
+    (typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version) || "0.6.0";
   let versionCache = null;
 
   function renderVersionFooter(el, v) {
@@ -616,8 +619,10 @@
       const a = h("span", { color: C.accent, cursor: "pointer", "text-decoration": "underline" },
         `可更新 → v${v.latest}`);
       a.title = "点击打开脚本页安装;也可在油猴菜单 → 管理面板 → 实用工具 → 从 URL 安装";
-      a.addEventListener("click", () => window.open(UPDATE_URL, "_blank"));
+      a.addEventListener("click", () => { const u = updateUrl(); if (u) window.open(u, "_blank"); });
       el.append(a);
+    } else if (v.mode === "noworker") {
+      el.append("未配置 Worker 地址");
     } else {
       el.append("检查更新失败");
     }
@@ -628,8 +633,14 @@
       renderVersionFooter(el, versionCache);
       return;
     }
+    const url = updateUrl();
+    if (!url) {
+      versionCache = { at: Date.now(), mode: "noworker" };
+      renderVersionFooter(el, versionCache);
+      return;
+    }
     el.textContent = `Web Inbox v${SCRIPT_VERSION} · 检查更新中…`;
-    gmRequest(UPDATE_URL)
+    gmRequest(url)
       .then((r) => {
         const m = (r.responseText || "").match(/@version\s+([0-9][0-9.]*)/);
         if (!m) throw new Error("bad version");

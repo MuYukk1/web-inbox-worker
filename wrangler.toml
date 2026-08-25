@@ -11,3 +11,8 @@ id = "__KV_ID__"
 
 [vars]
 TOKEN = "__WORKER_TOKEN__"
+
+# 把 userscript/web-inbox.user.js 作为文本模块打进 Worker,供 /userscript.user.js 路由分发
+rules = [
+  { type = "Text", globs = ["**/*.user.js"], fallthrough = true }
+]

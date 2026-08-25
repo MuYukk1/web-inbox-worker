@@ -6,26 +6,26 @@
 
 ## 安装油猴脚本
 
-**安装地址(CDN 加速):**
+脚本由 **Worker 自己托管**(路由 `/userscript.user.js`,公开访问),**部署即最新**,不依赖任何第三方 CDN——安装地址就是你自己 Worker 的地址,更新不再有 CDN 缓存延迟:
 
 ```
-https://cdn.jsdelivr.net/gh/MuYukk1/web-inbox-worker@main/userscript/web-inbox.user.js
+https://<你的Worker域名>/userscript.user.js
 ```
 
 推荐统一用「**从 URL 安装**」,安装和更新走同一条路:
 
 1. 浏览器安装 [Tampermonkey](https://www.tampermonkey.net/) 扩展(桌面 Edge/Chrome 的应用商店;安卓 Edge 商店同样上架了 Tampermonkey,双端用同一份脚本)
 2. 点击浏览器工具栏的 Tampermonkey 图标 → **管理面板**
-3. 切到「**实用工具**」标签 → 找到「**从 URL 安装**」→ 粘贴上面的安装地址 → 点「安装」
+3. 切到「**实用工具**」标签 → 找到「**从 URL 安装**」→ 粘贴上面的安装地址(先把 `<你的Worker域名>` 换成第 4 步部署得到的地址)→ 点「安装」
 4. 首次使用:任意网页点右下角 📥 悬浮按钮 → 「设置」→ 填 **Worker 地址**(部署后得到的 `https://<name>.<account>.workers.dev`)和 **Token**(部署时的 `WORKER_TOKEN`)→ 保存
 
 **更新方式**(任选其一):
 
-- **自动**:脚本头部带 `@updateURL` / `@downloadURL`,Tampermonkey 会定期后台检查并提示更新
+- **自动**:Tampermonkey 会定期按安装地址后台检查并提示更新(Worker 部署完成即最新,无缓存等待)
 - **手动检查**:管理面板 → 已安装脚本里选中本脚本 → 「实用工具」→「检查更新」
 - **直接覆盖**:重复上面的「从 URL 安装」,同名同 namespace 原地覆盖,本地设置不丢
 
-> CI 在每次部署后会自动刷新 jsDelivr CDN 缓存,正常发布几分钟后即可更新到新版。收集箱面板底部会显示当前版本号,有新版时可直接点击打开安装页。
+> 收集箱面板底部会显示当前版本号,有新版时可直接点击打开安装页。
 
 ## 部署 Cloudflare Worker(完整步骤)
 
