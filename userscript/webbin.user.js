@@ -3,7 +3,7 @@
 // @name:en      Webbin Saver
 // @description  保存网页正文/B站视频到自己的 Cloudflare Worker,双端 Edge 可用;B站视频可抓取字幕/评论,AI 总结、历史查看、下载归档
 // @namespace    https://github.com/local/webbin
-// @version      0.7.1
+// @version      0.7.2
 // @updateURL    /userscript.user.js
 // @author       you
 // @match        *://*/*
@@ -24,19 +24,37 @@
 
   // ---------- 工具 ----------
 
+  // Worker 地址规格化:去尾部斜杠、缺协议时补 https://
+  const normWorker = (v) => {
+    let s = String(v || "").trim().replace(/\/+$/, "");
+    if (s && !/^https?:\/\//i.test(s)) s = "https://" + s;
+    return s;
+  };
+
   const $storage = {
     get() {
       return {
-        worker: GM_getValue("worker", ""),
+        worker: normWorker(GM_getValue("worker", "")),
         token: GM_getValue("token", ""),
         btnX: GM_getValue("btnX", null),
         btnY: GM_getValue("btnY", null),
       };
     },
     set(key, value) {
-      GM_setValue(key, value);
+      GM_setValue(key, key === "worker" ? normWorker(value) : value);
     },
   };
+
+  // 响应不是 JSON 时的可读报错:Cloudflare 404 页面等 HTML 说明地址打到了别的站点
+  function explainBadResponse(status, text) {
+    const head = String(text || "").slice(0, 200).replace(/\s+/g, " ").trim();
+    if (status === 404 && /<(!doctype|html)/i.test(head)) {
+      return `Worker 地址不正确(返回了 404 网页而不是本服务)。请检查设置里的 Worker 地址是否填对,`
+        + `注意项目改名后旧地址已失效,应形如 https://webbin.<你的子域>.workers.dev`;
+    }
+    if (status === 0) return "网络错误(检查 Worker 地址是否正确、能否访问)";
+    return `响应不是 JSON(${status}): ${head.slice(0, 120)}`;
+  }
 
   function gmFetch(method, path, body) {
     const { worker, token } = $storage.get();
@@ -44,7 +62,7 @@
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method,
-        url: worker.replace(/\/+$/, "") + path,
+        url: worker + path,
         headers: { "content-type": "application/json", "x-token": token },
         data: body ? JSON.stringify(body) : undefined,
         timeout: 120000,
@@ -53,7 +71,7 @@
           try {
             data = JSON.parse(r.responseText);
           } catch {
-            return reject(new Error(`响应不是 JSON(${r.status}): ${r.responseText.slice(0, 120)}`));
+            return reject(new Error(explainBadResponse(r.status, r.responseText)));
           }
           if (r.status >= 400 || data.error) reject(new Error(data.error || `HTTP ${r.status}`));
           else resolve(data);
@@ -615,7 +633,7 @@
     return base ? base + "/userscript.user.js" : "";
   };
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version) || "0.7.1";
+    (typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version) || "0.7.2";
   let versionCache = null;
 
   function renderVersionFooter(el, v) {
@@ -1197,9 +1215,30 @@
     };
     const workerInput = noAutofill(mkInput(worker, "https://webbin.xxx.workers.dev"));
     const tokenInput = noAutofill(mkInput(token, "部署 Worker 时在 wrangler.toml 里设置的 TOKEN"));
+    tokenInput.type = "password";
     const apiBaseInput = noAutofill(mkInput("", "https://api.deepseek.com/v1"));
     const apiKeyInput = noAutofill(mkInput("", "留空/保持掩码则不修改"), "new-password");
     apiKeyInput.type = "password";
+
+    // 密码框右侧的小眼睛:切换明文/掩码显示
+    const withEye = (input) => {
+      const wrap = h("div", { position: "relative", display: "block" }, input);
+      input.style.setProperty("padding-right", "34px");
+      const eye = h("span", {
+        position: "absolute", right: "8px", top: "50%", transform: "translateY(-50%)",
+        cursor: "pointer", "font-size": "14px", "user-select": "none",
+        "line-height": "1", "z-index": "1", opacity: "0.75",
+      }, "👁");
+      eye.title = "显示/隐藏";
+      eye.addEventListener("click", () => {
+        const show = input.type === "password";
+        input.type = show ? "text" : "password";
+        eye.textContent = show ? "🚫" : "👁";
+        eye.style.opacity = show ? "1" : "0.75";
+      });
+      wrap.append(eye);
+      return wrap;
+    };
     const modelSelect = h("select", {
       width: "100%", padding: "8px 10px", "border-radius": "8px",
       border: `1px solid ${C.border}`, background: C.bg2, color: C.text,
@@ -1211,6 +1250,21 @@
       $storage.set("worker", workerInput.value.trim());
       $storage.set("token", tokenInput.value.trim());
       toast("已保存连接信息 ✓");
+    });
+
+    // 一键验证 Worker 地址与 Token 是否可用
+    const testConn = mkBtn("测试连接", () => {
+      $storage.set("worker", workerInput.value.trim());
+      $storage.set("token", tokenInput.value.trim());
+      testConn.disabled = true;
+      testConn.textContent = "测试中…";
+      gmFetch("GET", "/api/items")
+        .then(() => toast("连接成功 ✓ 地址与 Token 均可用"))
+        .catch((e) => toast("连接失败: " + e.message, true))
+        .finally(() => {
+          testConn.disabled = false;
+          testConn.textContent = "测试连接";
+        });
     });
 
     const loadCfg = mkBtn("读取云端 LLM 配置", () => {
@@ -1258,11 +1312,11 @@
 
     body.append(
       field("Worker 地址", workerInput),
-      field("Token", tokenInput),
-      h("div", { display: "flex", gap: "8px", margin: "12px 0" }, saveLocal, loadCfg),
+      field("Token", withEye(tokenInput)),
+      h("div", { display: "flex", gap: "8px", margin: "12px 0" }, saveLocal, testConn, loadCfg),
       h("div", { height: "1px", background: C.border, margin: "12px 0" }),
       field("LLM API Base(OpenAI 兼容)", apiBaseInput),
-      field("API Key(存服务端 KV,前端只回显掩码)", apiKeyInput),
+      field("API Key(存服务端 KV,前端只回显掩码)", withEye(apiKeyInput)),
       field("模型(先保存 api_base/key 后可拉列表)", modelSelect),
       field("或手动输入模型名", modelInput),
       h("div", { display: "flex", gap: "8px", "flex-wrap": "wrap" }, saveCfg, refreshModels),
