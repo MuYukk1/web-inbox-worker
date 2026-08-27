@@ -3,7 +3,7 @@
 // @name:en      Webbin Saver
 // @description  保存网页正文/B站视频到自己的 Cloudflare Worker,双端 Edge 可用;B站视频可抓取字幕/评论,AI 总结、历史查看、下载归档
 // @namespace    https://github.com/local/webbin
-// @version      0.7.2
+// @version      0.7.3
 // @updateURL    /userscript.user.js
 // @author       you
 // @match        *://*/*
@@ -105,6 +105,23 @@
     ok: "#22c55e",
   };
 
+  // 尊重「减少动态效果」系统设置:开启时禁用所有进出场/过渡动画
+  const REDUCE_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (typeof GM_addStyle === "function" && !REDUCE_MOTION) {
+    GM_addStyle(`
+@keyframes wi-pop { from { opacity: 0; transform: translateY(8px) scale(.97) } to { opacity: 1; transform: none } }
+@keyframes wi-fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes wi-slide { from { opacity: 0; transform: translateY(-6px) } to { opacity: 1; transform: none } }
+[data-wi-anim="pop"] { animation: wi-pop .18s ease-out both }
+[data-wi-anim="fade"] { animation: wi-fade .18s ease-out both }
+[data-wi-anim="slide"] { animation: wi-slide .18s ease-out both }
+[data-wi-anim="grow"] { animation: wi-pop .16s ease-out both }
+`);
+  }
+  const ANIM = REDUCE_MOTION
+    ? Object.fromEntries(["pop", "fade", "slide", "grow"].map((k) => [k, null]))
+    : { pop: "pop", fade: "fade", slide: "slide", grow: "grow" };
+
   let toastEl = null;
   // 本次会话内保存的条目:KV 最终一致性(最长约60s)期间合并进列表,保存即所见
   const savedLocal = [];
@@ -116,8 +133,9 @@
       padding: "8px 16px", "border-radius": "8px", "font-size": "13px",
       "z-index": "2147483647", "max-width": "86vw", "box-shadow": "0 4px 16px rgba(0,0,0,0.25)",
     }, msg);
+    if (ANIM.fade) toastEl.setAttribute("data-wi-anim", "fade");
     document.documentElement.append(toastEl);
-    setTimeout(() => toastEl && toastEl.remove(), isError ? 4200 : 2400);
+    setTimeout(() => { if (toastEl) { toastEl.style.setProperty("opacity", "0"); toastEl.style.setProperty("transition", "opacity .25s ease"); } setTimeout(() => toastEl && toastEl.remove(), 260); }, isError ? 4200 : 2400);
   }
 
   // ---------- 正文提取 ----------
@@ -592,9 +610,13 @@
       display: "flex", "align-items": "center", "justify-content": "center",
       cursor: "pointer", "user-select": "none",
       "box-shadow": "0 2px 10px rgba(0,0,0,0.3)", "touch-action": "none",
+      transition: "transform .15s ease, box-shadow .15s ease",
     });
+    if (ANIM.pop) btn.setAttribute("data-wi-anim", "pop");
     btn.title = "Webbin 收集箱";
     btn.setAttribute("data-wi-ui", "1");
+    btn.addEventListener("mouseenter", () => { btn.style.setProperty("transform", "scale(1.08)"); btn.style.setProperty("box-shadow", "0 4px 16px rgba(0,0,0,0.35)"); });
+    btn.addEventListener("mouseleave", () => { btn.style.setProperty("transform", ""); btn.style.setProperty("box-shadow", "0 2px 10px rgba(0,0,0,0.3)"); });
 
     let drag = null;
     btn.addEventListener("pointerdown", (e) => {
@@ -633,7 +655,7 @@
     return base ? base + "/userscript.user.js" : "";
   };
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version) || "0.7.2";
+    (typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version) || "0.7.3";
   let versionCache = null;
 
   function renderVersionFooter(el, v) {
@@ -687,7 +709,18 @@
   }
 
   function closePanel() {
-    if (panelEl) { panelEl.remove(); panelEl = null; }
+    if (!panelEl) return;
+    const el = panelEl;
+    panelEl = null; // 防止动画期间再次 toggle 复用同一个引用
+    if (ANIM.fade && el.isConnected) {
+      el.style.setProperty("transition", "opacity .18s ease");
+      el.style.setProperty("opacity", "0");
+      const panel = el.lastChild;
+      if (panel) panel.style.setProperty("transform", "translateY(8px) scale(.97)");
+      setTimeout(() => el.remove(), 200);
+    } else {
+      el.remove();
+    }
   }
 
   let currentTab = null, tabButtons = {}, tabPages = {};
@@ -698,6 +731,7 @@
       background: "rgba(0,0,0,0.35)", display: "flex",
       "align-items": "center", "justify-content": "center",
     });
+    if (ANIM.fade) overlay.setAttribute("data-wi-anim", "fade");
     overlay.addEventListener("click", (e) => { if (e.target === overlay) closePanel(); });
 
     const tabs = h("div", { display: "flex", "border-bottom": `1px solid ${C.border}`, "flex-shrink": "0" });
@@ -715,6 +749,7 @@
       "font-family": "system-ui,-apple-system,'Segoe UI',Roboto,sans-serif",
       "box-shadow": "0 12px 48px rgba(0,0,0,0.35)",
     }, tabs, body, footer);
+    if (ANIM.pop) panel.setAttribute("data-wi-anim", "pop");
     panel.setAttribute("data-wi-ui", "1");
 
     for (const [key, label] of [["save", "当前页"], ["list", "已保存"], ["settings", "设置"]]) {
@@ -746,6 +781,8 @@
     }
     const body = panel._state.body;
     body.replaceChildren();
+    if (ANIM.fade) body.setAttribute("data-wi-anim", "fade");
+    else body.removeAttribute("data-wi-anim");
     tabPages[key](body);
   }
 
@@ -1077,12 +1114,13 @@
     cb.style.setProperty("accent-color", C.accent);
     cb.style.setProperty("cursor", "pointer");
     cb.style.setProperty("flex-shrink", "0");
+    cb.style.setProperty("margin", "2px 10px 0 0"); // 右侧留白避免与标题重叠,顶端微调与首行居中
     return cb;
   }
 
   function renderListItem(it, onChange) {
     const date = new Date(it.created_at).toLocaleString("zh-CN", { hour12: false });
-    const badges = h("span", { "font-size": "11px" },
+    const badges = h("span", { "font-size": "11px", "margin-left": "4px" },
       it.type === "bilibili" ? " 📺B站" : "",
       it.has_summary ? " ✨已总结" : "",
       it.status === "archived" ? " ✅已归档" : "");
@@ -1093,14 +1131,19 @@
       else selectedIds.delete(it.id);
       onChange();
     });
+    const metaRow = h("div", { "font-size": "12px", color: C.sub, "margin-top": "2px", display: "flex", "align-items": "center", "flex-wrap": "wrap" },
+      h("span", {}, `${it.site} · ${date}`), badges);
     const textBlock = h("div", { flex: "1", "min-width": "0" },
       h("div", { "font-weight": "600", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }, it.title),
-      h("div", { "font-size": "12px", color: C.sub, "margin-top": "2px" }, `${it.site} · ${date}`, badges),
+      metaRow,
     );
     const row = h("div", {
       display: "flex", "align-items": "flex-start",
-      padding: "10px", "border-bottom": `1px solid ${C.border}`,
+      padding: "10px 12px", "border-bottom": `1px solid ${C.border}`,
+      cursor: "pointer", transition: "background .15s ease",
     }, cb, textBlock);
+    row.addEventListener("mouseenter", () => row.style.setProperty("background", C.bg2));
+    row.addEventListener("mouseleave", () => row.style.setProperty("background", "transparent"));
     textBlock.addEventListener("click", () => openDetail(row, it.id));
     return row;
   }
@@ -1113,6 +1156,7 @@
     Promise.resolve(local ? local : gmFetch("GET", "/api/item/" + id))
       .then((it) => {
         const detail = h("div", { padding: "10px", background: C.bg2, "border-bottom": `1px solid ${C.border}` });
+        if (ANIM.slide) detail.setAttribute("data-wi-anim", "slide");
         detail._detail = true;
 
         const summaryBox = h("div", {
@@ -1332,7 +1376,13 @@
       "font-size": "13px", border: `1px solid ${color || C.border}`,
       background: primary ? (color || C.accent) : "transparent",
       color: primary ? "#fff" : (color || C.text),
+      transition: "opacity .12s ease, transform .12s ease",
     }, label);
+    b.addEventListener("mouseenter", () => { if (!b.disabled) b.style.setProperty("opacity", "0.88"); });
+    b.addEventListener("mouseleave", () => b.style.setProperty("opacity", ""));
+    b.addEventListener("mousedown", () => b.style.setProperty("transform", "scale(0.96)"));
+    b.addEventListener("mouseup", () => b.style.setProperty("transform", ""));
+    b.addEventListener("mouseleave", () => b.style.setProperty("transform", ""));
     b.addEventListener("click", onClick);
     return b;
   }

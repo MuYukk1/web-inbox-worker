@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/webbin_icon_coral_w.jpg" width="160" alt="Webbin" />
+  <img src="assets/webbin_icon_coral.png" width="160" alt="Webbin" />
   <h1>Webbin</h1>
 
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-f6821f)](https://workers.cloudflare.com/)
@@ -111,7 +111,7 @@ wrangler deploy
 
 | 文件 | 说明 |
 |---|---|
-| `assets/webbin_icon_coral_w.jpg` | 主图标(README 头图) |
+| `assets/webbin_icon_coral.png` | 主图标,透明背景(README 头图) |
 | `assets/webbin_icon_isometric.jpg` | 等距风图标(悬浮球采用其圆形裁切) |
 
 悬浮球图标由等距原图直接圆形裁切后内嵌在油猴脚本中,无外部请求。
