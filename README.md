@@ -1,4 +1,12 @@
-# Webbin
+<div align="center">
+  <img src="assets/webbin_icon_coral_w.jpg" width="160" alt="Webbin" />
+  <h1>Webbin</h1>
+
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-f6821f)](https://workers.cloudflare.com/)
+[![Tampermonkey](https://img.shields.io/badge/Tampermonkey-UserScript-00485b)](https://www.tampermonkey.net/)
+[![Userscript Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fwebbin.arevlx.workers.dev%2Fuserscript.user.js&query=%24.version&prefix=v&label=script)](https://github.com/MuYukk1/webbin)
+
+</div>
 
 [Webbin](../bili-inbox) 收集箱的 Cloudflare Worker 后端:存储网页/B站链接、管理 LLM 配置(存 KV,key 前端只回显掩码)、转发 AI 总结请求、接收 PC 归档脚本的状态回写。
 
@@ -103,11 +111,10 @@ wrangler deploy
 
 | 文件 | 说明 |
 |---|---|
-| `icons/webbin_icon_coral_w.png` | 主图标(珊瑚色,已去背景) |
-| `icons/webbin_icon_isometric.png` | 等距风图标(悬浮球/衍生用途,已去背景) |
-| `icons/*_512.png` | 同名 512px 方形导出版 |
+| `assets/webbin_icon_coral_w.jpg` | 主图标(README 头图) |
+| `assets/webbin_icon_isometric.jpg` | 等距风图标(悬浮球采用其圆形裁切) |
 
-原始 jpg 与悬浮球圆形版在仓库外;悬浮球图标已量化内嵌在油猴脚本中,无外部请求。
+悬浮球图标由等距原图直接圆形裁切后内嵌在油猴脚本中,无外部请求。
 
 ## 说明
 
