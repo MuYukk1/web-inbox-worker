@@ -3,7 +3,7 @@
 // @name:en      Webbin Saver
 // @description  保存网页正文/B站视频到自己的 Cloudflare Worker,双端 Edge 可用;B站视频可抓取字幕/评论,AI 总结、历史查看、下载归档
 // @namespace    https://github.com/local/webbin
-// @version      0.7.3
+// @version      0.7.4
 // @updateURL    /userscript.user.js
 // @author       you
 // @match        *://*/*
@@ -655,7 +655,7 @@
     return base ? base + "/userscript.user.js" : "";
   };
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version) || "0.7.3";
+    (typeof GM_info !== "undefined" && GM_info.script && GM_info.script.version) || "0.7.4";
   let versionCache = null;
 
   function renderVersionFooter(el, v) {
@@ -713,10 +713,14 @@
     const el = panelEl;
     panelEl = null; // 防止动画期间再次 toggle 复用同一个引用
     if (ANIM.fade && el.isConnected) {
+      const panel = el.lastChild;
+      if (panel) {
+        panel.removeAttribute("data-wi-anim"); // 撤掉入场 animation,交给 transition 接管
+        panel.style.setProperty("opacity", "0");
+        panel.style.setProperty("transform", "translateY(8px) scale(.97)");
+      }
       el.style.setProperty("transition", "opacity .18s ease");
       el.style.setProperty("opacity", "0");
-      const panel = el.lastChild;
-      if (panel) panel.style.setProperty("transform", "translateY(8px) scale(.97)");
       setTimeout(() => el.remove(), 200);
     } else {
       el.remove();
@@ -748,6 +752,7 @@
       "font-size": "14px", "line-height": "1.6",
       "font-family": "system-ui,-apple-system,'Segoe UI',Roboto,sans-serif",
       "box-shadow": "0 12px 48px rgba(0,0,0,0.35)",
+      transition: "opacity .18s ease, transform .18s ease",
     }, tabs, body, footer);
     if (ANIM.pop) panel.setAttribute("data-wi-anim", "pop");
     panel.setAttribute("data-wi-ui", "1");

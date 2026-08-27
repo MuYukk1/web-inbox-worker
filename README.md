@@ -51,11 +51,11 @@ https://<你的Worker域名>/userscript.user.js
 
 ### 3. 记下 Account ID
 
-Dashboard 首页右侧栏(或任意域名 Overview 页右下角)的 **Account ID**,复制。
+点击右上角Ask AI，选择账户内用户名下方就是账户ID。
 
 ### 4. 创建 API Token
 
-[Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token** → 选 **"Edit Cloudflare Workers"** 模板(已包含部署 Worker 与操作 KV 所需权限)→ Create Token → **复制生成的 token**(只显示一次)。
+[Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token** → 选 **"Edit Cloudflare Workers"** 模板(已包含部署 Worker 与操作 KV 所需权限)→ Create Token → **复制生成的 token**(只显示一次)。第3步的Account ID也可以在这一步看到。
 
 ### 5. 配置仓库 Secrets
 
@@ -106,15 +106,6 @@ wrangler deploy
 | POST | `/api/status` | PC 归档脚本回写 `{id, status, archive, summary}` |
 | GET/POST | `/api/settings` | LLM 配置(GET 回显掩码 key;POST 留空/掩码不覆盖) |
 | POST | `/api/models` | 代理拉取 `{api_base}/models` 模型列表 |
-
-## 图标
-
-| 文件 | 说明 |
-|---|---|
-| `assets/webbin_icon_coral.png` | 主图标,透明背景(README 头图) |
-| `assets/webbin_icon_isometric.jpg` | 等距风图标(悬浮球采用其圆形裁切) |
-
-悬浮球图标由等距原图直接圆形裁切后内嵌在油猴脚本中,无外部请求。
 
 ## 说明
 
