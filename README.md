@@ -1,8 +1,8 @@
-# web-inbox-worker
+# Webbin
 
-[Web Inbox](../bili-inbox) 收集箱的 Cloudflare Worker 后端:存储网页/B站链接、管理 LLM 配置(存 KV,key 前端只回显掩码)、转发 AI 总结请求、接收 PC 归档脚本的状态回写。
+[Webbin](../bili-inbox) 收集箱的 Cloudflare Worker 后端:存储网页/B站链接、管理 LLM 配置(存 KV,key 前端只回显掩码)、转发 AI 总结请求、接收 PC 归档脚本的状态回写。
 
-客户端:双端 Edge 的 Tampermonkey 油猴脚本(`userscript/web-inbox.user.js`,本仓库也提供自动更新源)+ PC 归档脚本(本地项目 `bili-inbox/`)。
+客户端:双端 Edge 的 Tampermonkey 油猴脚本(`userscript/webbin.user.js`,本仓库也提供自动更新源)+ PC 归档脚本(本地项目 `bili-inbox/`)。
 
 ## 安装油猴脚本
 
@@ -37,7 +37,7 @@ https://<你的Worker域名>/userscript.user.js
 
 ### 2. 创建 KV 命名空间
 
-[Cloudflare Dashboard](https://dash.cloudflare.com) → 左侧 **Storage & Databases → KV**(旧版界面在 **Workers & Pages → KV**)→ **Create namespace**,名字随意(如 `web-inbox`)→ 进入详情**复制 Namespace ID**(32 位十六进制串)。
+[Cloudflare Dashboard](https://dash.cloudflare.com) → 左侧 **Storage & Databases → KV**(旧版界面在 **Workers & Pages → KV**)→ **Create namespace**,名字随意(如 `webbin`)→ 进入详情**复制 Namespace ID**(32 位十六进制串)。
 
 也可以用 CLI:`npx wrangler kv namespace create KV`,取输出中的 `id`。
 
@@ -62,14 +62,14 @@ Fork 的仓库 → **Settings → Secrets and variables → Actions** → **New 
 
 ### 6. (可选)改 Worker 名字
 
-`wrangler.toml` 中 `name = "web-inbox"` 可改成自己的名字,它决定访问域名 `https://<name>.<account-subdomain>.workers.dev`。
+`wrangler.toml` 中 `name = "webbin"` 可改成自己的名字,它决定访问域名 `https://<name>.<account-subdomain>.workers.dev`。
 
 ### 7. 部署与验证
 
 推送到 main(或在 **Actions → Test & Deploy → Run workflow** 手动触发)→ 等所有任务变绿 → 浏览器打开 `https://<name>.<account-subdomain>.workers.dev/`,看到:
 
 ```json
-{"app": "web-inbox", "ok": true, "hint": "服务正常,请通过油猴脚本或 PC 脚本访问"}
+{"app": "webbin", "ok": true, "hint": "服务正常,请通过油猴脚本或 PC 脚本访问"}
 ```
 
 即部署成功。回到油猴脚本「设置」页填入 Worker 地址和 Token 即可使用。
@@ -98,6 +98,16 @@ wrangler deploy
 | POST | `/api/status` | PC 归档脚本回写 `{id, status, archive, summary}` |
 | GET/POST | `/api/settings` | LLM 配置(GET 回显掩码 key;POST 留空/掩码不覆盖) |
 | POST | `/api/models` | 代理拉取 `{api_base}/models` 模型列表 |
+
+## 图标
+
+| 文件 | 说明 |
+|---|---|
+| `icons/webbin_icon_coral_w.png` | 主图标(珊瑚色,已去背景) |
+| `icons/webbin_icon_isometric.png` | 等距风图标(悬浮球/衍生用途,已去背景) |
+| `icons/*_512.png` | 同名 512px 方形导出版 |
+
+原始 jpg 与悬浮球圆形版在仓库外;悬浮球图标已量化内嵌在油猴脚本中,无外部请求。
 
 ## 说明
 

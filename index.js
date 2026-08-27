@@ -1,4 +1,4 @@
-// Web Inbox Worker — 油猴脚本与 PC 归档脚本的共享后端
+// Webbin Worker — 油猴脚本与 PC 归档脚本的共享后端
 // KV 结构:
 //   settings      → { api_base, api_key, model }
 //   item:<id>     → { id, url, title, site, type, content, created_at,
@@ -6,7 +6,7 @@
 // 鉴权:请求头 x-token === 环境变量 TOKEN(部署前在 wrangler.toml 里修改)
 // /userscript.user.js 为公开路由(免鉴权),部署即最新,替代 jsDelivr 分发
 
-import userscriptSource from "./userscript/web-inbox.user.js";
+import userscriptSource from "./userscript/webbin.user.js";
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -90,7 +90,7 @@ export default {
     const KV = env.KV;
 
     if (path === "/") {
-      return json({ app: "web-inbox", ok: true, hint: "服务正常,请通过油猴脚本或 PC 脚本访问" });
+      return json({ app: "webbin", ok: true, hint: "服务正常,请通过油猴脚本或 PC 脚本访问" });
     }
 
     // 油猴脚本分发(公开):版本检查与安装都指向这里,部署即最新

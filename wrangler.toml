@@ -1,8 +1,8 @@
-name = "web-inbox"
+name = "webbin"
 main = "index.js"
 compatibility_date = "2025-01-01"
 
-# 把 userscript/web-inbox.user.js 作为文本模块打进 Worker,供 /userscript.user.js 路由分发
+# 把 userscript/webbin.user.js 作为文本模块打进 Worker,供 /userscript.user.js 路由分发
 # (必须放在文件顶层;放进 [vars] 会被当成环境变量)
 rules = [
   { type = "Text", globs = ["**/*.user.js"], fallthrough = true }

@@ -1,5 +1,5 @@
 {
-  "name": "web-inbox-worker",
+  "name": "webbin",
   "private": true,
   "type": "module",
   "scripts": {
